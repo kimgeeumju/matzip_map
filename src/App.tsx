@@ -17,7 +17,8 @@ import { CollectionAddPlacesPage } from "./pages/collection-add-places";
 import { MapSearchAddPage } from "./pages/map-search-add-page";
 import { toast } from "sonner";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ?? "https://matzipmapback-production.up.railway.app";
 
 export type Place = {
   id: string;
