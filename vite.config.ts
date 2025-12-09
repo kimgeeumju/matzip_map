@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss(), // ← 이 줄 추가
+    tailwindcss(),
   ],
+  base:"./",
 })
