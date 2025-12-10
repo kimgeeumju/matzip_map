@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LoginPage } from "./pages/login";
 import { SignupPage } from "./pages/signup";
 import { MapPage } from "./pages/map";
@@ -53,14 +53,20 @@ export type Collection = {
   createdAt: string;
 };
 
-// 🔐 유저별 + 전역 places 를 localStorage에 저장하기 위한 헬퍼들
+// 🔐 유저별 places를 localStorage에 저장하기 위한 헬퍼들
 const STORAGE_KEY_PREFIX = "matzip_places_";
-const GLOBAL_STORAGE_KEY = "matzip_places_global";
-const LAST_USER_EMAIL_KEY = "matzip_last_user_email";
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function getUserPlacesKey(email: string): string {
+  return STORAGE_KEY_PREFIX + normalizeEmail(email);
+}
 
 function loadPlacesForUser(email: string): Place[] {
   try {
-    const key = STORAGE_KEY_PREFIX + email;
+    const key = getUserPlacesKey(email);
     const raw = localStorage.getItem(key);
     if (!raw) return [];
     return JSON.parse(raw) as Place[];
@@ -71,28 +77,10 @@ function loadPlacesForUser(email: string): Place[] {
 
 function savePlacesForUser(email: string, places: Place[]) {
   try {
-    const key = STORAGE_KEY_PREFIX + email;
+    const key = getUserPlacesKey(email);
     localStorage.setItem(key, JSON.stringify(places));
   } catch {
-    // 무시
-  }
-}
-
-function loadGlobalPlaces(): Place[] {
-  try {
-    const raw = localStorage.getItem(GLOBAL_STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Place[];
-  } catch {
-    return [];
-  }
-}
-
-function saveGlobalPlaces(places: Place[]) {
-  try {
-    localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(places));
-  } catch {
-    // 무시
+    // 저장 실패해도 앱이 죽지 않도록 조용히 무시
   }
 }
 
@@ -114,6 +102,7 @@ type Page =
   | "collection-add-places";
 
 export default function App() {
+  // ✅ 앱이 처음 켜질 때 기본은 무조건 "login"
   const [currentPage, setCurrentPage] = useState<Page>("login");
   const [user, setUser] = useState<UserProfile | null>(null);
   const [places, setPlaces] = useState<Place[]>([]);
@@ -126,52 +115,7 @@ export default function App() {
   const [tempCollection, setTempCollection] =
     useState<Partial<Collection> | null>(null);
 
-  // ✅ 앱 처음 켜질 때: 마지막 로그인한 유저 / 저장된 맛집 자동 복원
-  useEffect(() => {
-    try {
-      const lastEmail = localStorage.getItem(LAST_USER_EMAIL_KEY);
-      const accessToken = localStorage.getItem("accessToken");
-
-      const globalPlaces = loadGlobalPlaces();
-
-      if (lastEmail && accessToken) {
-        const normalizedEmail = lastEmail.trim().toLowerCase();
-        const userPlaces = loadPlacesForUser(normalizedEmail);
-
-        const finalPlaces =
-          userPlaces.length > 0
-            ? userPlaces
-            : globalPlaces.length > 0
-            ? globalPlaces
-            : [];
-
-        // 유저 정보도 자동으로 세팅해서 바로 map 페이지로
-        const autoUser: UserProfile = {
-          email: normalizedEmail,
-          password: "", // 실제 비밀번호는 몰라도 됨 (다시 로그인 시 입력)
-          nickname: normalizedEmail.split("@")[0],
-          bio: "취향 한 줄 소개가 여기에 표시됩니다",
-          followingCount: 0,
-          followerCount: 0,
-        };
-
-        setUser(autoUser);
-        setPlaces(finalPlaces);
-        setCurrentPage("map"); // 🔥 바로 지도 페이지로
-      } else {
-        // 로그인 정보는 없지만, 전역 places 는 있을 수 있음
-        if (globalPlaces.length > 0) {
-          setPlaces(globalPlaces);
-        }
-        setCurrentPage("login");
-      }
-    } catch (e) {
-      console.error("초기 로드 에러:", e);
-      setCurrentPage("login");
-    }
-  }, []);
-
-  // ✅ 실제 백엔드 /auth/signin 호출
+  // ✅ 이메일/비번 로그인
   const handleLogin = async (email: string, password: string) => {
     try {
       const res = await fetch(`${API_BASE_URL}/auth/signin`, {
@@ -191,21 +135,8 @@ export default function App() {
       localStorage.setItem("accessToken", data.accessToken);
       localStorage.setItem("refreshToken", data.refreshToken);
 
-      const normalizedEmail = email.trim().toLowerCase();
-      localStorage.setItem(LAST_USER_EMAIL_KEY, normalizedEmail);
-
+      const normalizedEmail = normalizeEmail(email);
       const userPlaces = loadPlacesForUser(normalizedEmail);
-      const globalPlaces = loadGlobalPlaces();
-
-      const finalPlaces =
-        userPlaces.length > 0
-          ? userPlaces
-          : globalPlaces.length > 0
-          ? globalPlaces
-          : [];
-
-      savePlacesForUser(normalizedEmail, finalPlaces);
-      saveGlobalPlaces(finalPlaces);
 
       const newUser: UserProfile = {
         email: normalizedEmail,
@@ -217,7 +148,7 @@ export default function App() {
       };
 
       setUser(newUser);
-      setPlaces(finalPlaces);
+      setPlaces(userPlaces); // 🔥 이 계정이 전에 저장해둔 맛집 복구
 
       toast.success("로그인 성공!");
       setCurrentPage("map");
@@ -227,7 +158,7 @@ export default function App() {
     }
   };
 
-  // ✅ 실제 백엔드 /auth/signup 호출
+  // ✅ 회원가입
   const handleSignup = async (
     email: string,
     password: string,
@@ -247,20 +178,8 @@ export default function App() {
         return;
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
-      localStorage.setItem(LAST_USER_EMAIL_KEY, normalizedEmail);
-
-      const userPlaces = loadPlacesForUser(normalizedEmail);
-      const globalPlaces = loadGlobalPlaces();
-      const finalPlaces =
-        userPlaces.length > 0
-          ? userPlaces
-          : globalPlaces.length > 0
-          ? globalPlaces
-          : [];
-
-      savePlacesForUser(normalizedEmail, finalPlaces);
-      saveGlobalPlaces(finalPlaces);
+      const normalizedEmail = normalizeEmail(email);
+      const userPlaces = loadPlacesForUser(normalizedEmail); // 혹시 이미 저장된 게 있으면 불러오기
 
       const newUser: UserProfile = {
         email: normalizedEmail,
@@ -272,7 +191,7 @@ export default function App() {
       };
 
       setUser(newUser);
-      setPlaces(finalPlaces);
+      setPlaces(userPlaces);
 
       toast.success("회원가입 완료! 자동 로그인되었습니다.");
       setCurrentPage("map");
@@ -289,46 +208,29 @@ export default function App() {
     setCurrentPage("mypage");
   };
 
-  // ✅ 맛집 추가 시 localStorage(전역 + 유저별)에 저장
+  // 🔥 맛집이 바뀔 때마다, 현재 로그인한 유저 계정으로 저장
+  const syncPlaces = (updated: Place[]) => {
+    setPlaces(updated);
+    if (user) {
+      savePlacesForUser(user.email, updated);
+    }
+  };
+
   const handleAddPlace = (place: Place) => {
-    setPlaces((prev) => {
-      const updated = [...prev, place];
-
-      saveGlobalPlaces(updated);
-      if (user) {
-        savePlacesForUser(user.email, updated);
-      }
-
-      return updated;
-    });
+    const updated = [...places, place];
+    syncPlaces(updated);
   };
 
   const handleUpdatePlace = (updatedPlace: Place) => {
-    setPlaces((prev) => {
-      const updated = prev.map((p) => (p.id === updatedPlace.id ? updatedPlace : p));
-
-      saveGlobalPlaces(updated);
-      if (user) {
-        savePlacesForUser(user.email, updated);
-      }
-
-      return updated;
-    });
+    const updated = places.map((p) => (p.id === updatedPlace.id ? updatedPlace : p));
+    syncPlaces(updated);
     setSelectedPlace(null);
     setCurrentPage("feed");
   };
 
   const handleDeletePlace = (placeId: string) => {
-    setPlaces((prev) => {
-      const updated = prev.filter((p) => p.id !== placeId);
-
-      saveGlobalPlaces(updated);
-      if (user) {
-        savePlacesForUser(user.email, updated);
-      }
-
-      return updated;
-    });
+    const updated = places.filter((p) => p.id !== placeId);
+    syncPlaces(updated);
     setSelectedPlace(null);
     setCurrentPage("feed");
   };
@@ -339,46 +241,22 @@ export default function App() {
   };
 
   const handleTogglePlaceFavorite = (placeId: string) => {
-    setPlaces((prev) => {
-      const updated = prev.map((p) =>
-        p.id === placeId ? { ...p, isFavorite: !p.isFavorite } : p,
-      );
-
-      saveGlobalPlaces(updated);
-      if (user) {
-        savePlacesForUser(user.email, updated);
-      }
-
-      return updated;
-    });
+    const updated = places.map((p) =>
+      p.id === placeId ? { ...p, isFavorite: !p.isFavorite } : p,
+    );
+    syncPlaces(updated);
   };
 
   const handleTogglePlaceWishlist = (placeId: string) => {
-    setPlaces((prev) => {
-      const updated = prev.map((p) =>
-        p.id === placeId ? { ...p, isWishlist: !p.isWishlist } : p,
-      );
-
-      saveGlobalPlaces(updated);
-      if (user) {
-        savePlacesForUser(user.email, updated);
-      }
-
-      return updated;
-    });
+    const updated = places.map((p) =>
+      p.id === placeId ? { ...p, isWishlist: !p.isWishlist } : p,
+    );
+    syncPlaces(updated);
   };
 
   const handleAddWishlistPlace = (place: Place) => {
-    setPlaces((prev) => {
-      const updated = [...prev, { ...place, isWishlist: true }];
-
-      saveGlobalPlaces(updated);
-      if (user) {
-        savePlacesForUser(user.email, updated);
-      }
-
-      return updated;
-    });
+    const updated = [...places, { ...place, isWishlist: true }];
+    syncPlaces(updated);
   };
 
   const handleCreateCollection = (name: string, description: string) => {
