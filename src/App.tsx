@@ -124,11 +124,48 @@ export default function App() {
   const [tempCollection, setTempCollection] =
     useState<Partial<Collection> | null>(null);
 
-  // 👇 앱이 처음 켜질 때, "전역 저장된 맛집" 먼저 복원
+  // ✅ 앱 처음 켜질 때: 마지막 로그인한 유저 / 저장된 맛집 자동 복원
   useEffect(() => {
-    const globalPlaces = loadGlobalPlaces();
-    if (globalPlaces.length > 0) {
-      setPlaces(globalPlaces);
+    try {
+      const lastEmail = localStorage.getItem(LAST_USER_EMAIL_KEY);
+      const accessToken = localStorage.getItem("accessToken");
+
+      const globalPlaces = loadGlobalPlaces();
+
+      if (lastEmail && accessToken) {
+        const normalizedEmail = lastEmail.trim().toLowerCase();
+        const userPlaces = loadPlacesForUser(normalizedEmail);
+
+        const finalPlaces =
+          userPlaces.length > 0
+            ? userPlaces
+            : globalPlaces.length > 0
+            ? globalPlaces
+            : [];
+
+        // 유저 정보도 자동으로 세팅해서 바로 map 페이지로
+        const autoUser: UserProfile = {
+          email: normalizedEmail,
+          password: "", // 실제 비밀번호는 몰라도 됨 (다시 로그인 시 입력)
+          nickname: normalizedEmail.split("@")[0],
+          bio: "취향 한 줄 소개가 여기에 표시됩니다",
+          followingCount: 0,
+          followerCount: 0,
+        };
+
+        setUser(autoUser);
+        setPlaces(finalPlaces);
+        setCurrentPage("map"); // 🔥 바로 지도 페이지로
+      } else {
+        // 로그인 정보는 없지만, 전역 places 는 있을 수 있음
+        if (globalPlaces.length > 0) {
+          setPlaces(globalPlaces);
+        }
+        setCurrentPage("login");
+      }
+    } catch (e) {
+      console.error("초기 로드 에러:", e);
+      setCurrentPage("login");
     }
   }, []);
 
@@ -158,17 +195,19 @@ export default function App() {
       const userPlaces = loadPlacesForUser(normalizedEmail);
       const globalPlaces = loadGlobalPlaces();
 
-      // 유저별 저장된 게 있으면 그걸 우선, 없으면 전역 저장된 거 사용
       const finalPlaces =
-        userPlaces.length > 0 ? userPlaces : globalPlaces.length > 0 ? globalPlaces : [];
+        userPlaces.length > 0
+          ? userPlaces
+          : globalPlaces.length > 0
+          ? globalPlaces
+          : [];
 
-      // 유저별/전역 둘 다 최신으로 맞춰주기
       savePlacesForUser(normalizedEmail, finalPlaces);
       saveGlobalPlaces(finalPlaces);
 
       const newUser: UserProfile = {
         email: normalizedEmail,
-        password, // 비밀번호 검증 페이지에서 쓰고 있으면 유지
+        password,
         nickname: normalizedEmail.split("@")[0],
         bio: "취향 한 줄 소개가 여기에 표시됩니다",
         followingCount: 0,
@@ -196,7 +235,7 @@ export default function App() {
       const res = await fetch(`${API_BASE_URL}/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }), // 서버 AuthDto = { email, password }
+        body: JSON.stringify({ email, password }),
       });
 
       if (!res.ok) {
@@ -212,12 +251,15 @@ export default function App() {
       const userPlaces = loadPlacesForUser(normalizedEmail);
       const globalPlaces = loadGlobalPlaces();
       const finalPlaces =
-        userPlaces.length > 0 ? userPlaces : globalPlaces.length > 0 ? globalPlaces : [];
+        userPlaces.length > 0
+          ? userPlaces
+          : globalPlaces.length > 0
+          ? globalPlaces
+          : [];
 
       savePlacesForUser(normalizedEmail, finalPlaces);
       saveGlobalPlaces(finalPlaces);
 
-      // 서버 signup은 body를 따로 안 돌려주니까, 그냥 자동 로그인 처리
       const newUser: UserProfile = {
         email: normalizedEmail,
         password,
