@@ -17,8 +17,7 @@ import { CollectionAddPlacesPage } from "./pages/collection-add-places";
 import { MapSearchAddPage } from "./pages/map-search-add-page";
 import { toast } from "sonner";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL ?? "https://matzipmapback-production.up.railway.app";
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 export type Place = {
   id: string;
@@ -51,6 +50,29 @@ export type Collection = {
   placeIds: string[];
   createdAt: string;
 };
+
+// 🔐 유저별로 places를 localStorage에 저장하기 위한 헬퍼들
+const STORAGE_KEY_PREFIX = "matzip_places_";
+
+function loadPlacesForUser(email: string): Place[] {
+  try {
+    const key = STORAGE_KEY_PREFIX + email;
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    return JSON.parse(raw) as Place[];
+  } catch {
+    return [];
+  }
+}
+
+function savePlacesForUser(email: string, places: Place[]) {
+  try {
+    const key = STORAGE_KEY_PREFIX + email;
+    localStorage.setItem(key, JSON.stringify(places));
+  } catch {
+    // 저장 실패해도 앱이 죽지 않도록 조용히 무시
+  }
+}
 
 type Page =
   | "login"
@@ -102,14 +124,20 @@ export default function App() {
       localStorage.setItem("accessToken", data.accessToken);
       localStorage.setItem("refreshToken", data.refreshToken);
 
-      setUser({
-        email,
+      const normalizedEmail = email.trim().toLowerCase();
+      const loadedPlaces = loadPlacesForUser(normalizedEmail);
+
+      const newUser: UserProfile = {
+        email: normalizedEmail,
         password, // 비밀번호 검증 페이지에서 쓰고 있으면 유지
-        nickname: email.split("@")[0],
+        nickname: normalizedEmail.split("@")[0],
         bio: "취향 한 줄 소개가 여기에 표시됩니다",
         followingCount: 0,
         followerCount: 0,
-      });
+      };
+
+      setUser(newUser);
+      setPlaces(loadedPlaces); // 🔥 유저별 저장된 맛집 불러오기
 
       toast.success("로그인 성공!");
       setCurrentPage("map");
@@ -139,15 +167,21 @@ export default function App() {
         return;
       }
 
+      const normalizedEmail = email.trim().toLowerCase();
+      const loadedPlaces = loadPlacesForUser(normalizedEmail);
+
       // 서버 signup은 body를 따로 안 돌려주니까, 그냥 자동 로그인 처리
-      setUser({
-        email,
+      const newUser: UserProfile = {
+        email: normalizedEmail,
         password,
-        nickname: name || email.split("@")[0],
+        nickname: name || normalizedEmail.split("@")[0],
         bio: "",
         followingCount: 0,
         followerCount: 0,
-      });
+      };
+
+      setUser(newUser);
+      setPlaces(loadedPlaces); // 새 유저면 빈 배열
 
       toast.success("회원가입 완료! 자동 로그인되었습니다.");
       setCurrentPage("map");
@@ -164,20 +198,37 @@ export default function App() {
     setCurrentPage("mypage");
   };
 
+  // ✅ 맛집 추가 시 localStorage에도 저장
   const handleAddPlace = (place: Place) => {
-    setPlaces([...places, place]);
+    setPlaces((prev) => {
+      const updated = [...prev, place];
+      if (user) {
+        savePlacesForUser(user.email, updated);
+      }
+      return updated;
+    });
   };
 
   const handleUpdatePlace = (updatedPlace: Place) => {
-    setPlaces(
-      places.map((p) => (p.id === updatedPlace.id ? updatedPlace : p)),
-    );
+    setPlaces((prev) => {
+      const updated = prev.map((p) => (p.id === updatedPlace.id ? updatedPlace : p));
+      if (user) {
+        savePlacesForUser(user.email, updated);
+      }
+      return updated;
+    });
     setSelectedPlace(null);
     setCurrentPage("feed");
   };
 
   const handleDeletePlace = (placeId: string) => {
-    setPlaces(places.filter((p) => p.id !== placeId));
+    setPlaces((prev) => {
+      const updated = prev.filter((p) => p.id !== placeId);
+      if (user) {
+        savePlacesForUser(user.email, updated);
+      }
+      return updated;
+    });
     setSelectedPlace(null);
     setCurrentPage("feed");
   };
@@ -188,23 +239,37 @@ export default function App() {
   };
 
   const handleTogglePlaceFavorite = (placeId: string) => {
-    setPlaces(
-      places.map((p) =>
+    setPlaces((prev) => {
+      const updated = prev.map((p) =>
         p.id === placeId ? { ...p, isFavorite: !p.isFavorite } : p,
-      ),
-    );
+      );
+      if (user) {
+        savePlacesForUser(user.email, updated);
+      }
+      return updated;
+    });
   };
 
   const handleTogglePlaceWishlist = (placeId: string) => {
-    setPlaces(
-      places.map((p) =>
+    setPlaces((prev) => {
+      const updated = prev.map((p) =>
         p.id === placeId ? { ...p, isWishlist: !p.isWishlist } : p,
-      ),
-    );
+      );
+      if (user) {
+        savePlacesForUser(user.email, updated);
+      }
+      return updated;
+    });
   };
 
   const handleAddWishlistPlace = (place: Place) => {
-    setPlaces([...places, { ...place, isWishlist: true }]);
+    setPlaces((prev) => {
+      const updated = [...prev, { ...place, isWishlist: true }];
+      if (user) {
+        savePlacesForUser(user.email, updated);
+      }
+      return updated;
+    });
   };
 
   const handleCreateCollection = (name: string, description: string) => {
