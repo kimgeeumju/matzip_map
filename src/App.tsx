@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LoginPage } from "./pages/login";
 import { SignupPage } from "./pages/signup";
 import { MapPage } from "./pages/map";
@@ -51,8 +51,10 @@ export type Collection = {
   createdAt: string;
 };
 
-// 🔐 유저별로 places를 localStorage에 저장하기 위한 헬퍼들
+// 🔐 유저별 + 전역 places 를 localStorage에 저장하기 위한 헬퍼들
 const STORAGE_KEY_PREFIX = "matzip_places_";
+const GLOBAL_STORAGE_KEY = "matzip_places_global";
+const LAST_USER_EMAIL_KEY = "matzip_last_user_email";
 
 function loadPlacesForUser(email: string): Place[] {
   try {
@@ -70,7 +72,25 @@ function savePlacesForUser(email: string, places: Place[]) {
     const key = STORAGE_KEY_PREFIX + email;
     localStorage.setItem(key, JSON.stringify(places));
   } catch {
-    // 저장 실패해도 앱이 죽지 않도록 조용히 무시
+    // 무시
+  }
+}
+
+function loadGlobalPlaces(): Place[] {
+  try {
+    const raw = localStorage.getItem(GLOBAL_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as Place[];
+  } catch {
+    return [];
+  }
+}
+
+function saveGlobalPlaces(places: Place[]) {
+  try {
+    localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(places));
+  } catch {
+    // 무시
   }
 }
 
@@ -104,6 +124,14 @@ export default function App() {
   const [tempCollection, setTempCollection] =
     useState<Partial<Collection> | null>(null);
 
+  // 👇 앱이 처음 켜질 때, "전역 저장된 맛집" 먼저 복원
+  useEffect(() => {
+    const globalPlaces = loadGlobalPlaces();
+    if (globalPlaces.length > 0) {
+      setPlaces(globalPlaces);
+    }
+  }, []);
+
   // ✅ 실제 백엔드 /auth/signin 호출
   const handleLogin = async (email: string, password: string) => {
     try {
@@ -125,7 +153,18 @@ export default function App() {
       localStorage.setItem("refreshToken", data.refreshToken);
 
       const normalizedEmail = email.trim().toLowerCase();
-      const loadedPlaces = loadPlacesForUser(normalizedEmail);
+      localStorage.setItem(LAST_USER_EMAIL_KEY, normalizedEmail);
+
+      const userPlaces = loadPlacesForUser(normalizedEmail);
+      const globalPlaces = loadGlobalPlaces();
+
+      // 유저별 저장된 게 있으면 그걸 우선, 없으면 전역 저장된 거 사용
+      const finalPlaces =
+        userPlaces.length > 0 ? userPlaces : globalPlaces.length > 0 ? globalPlaces : [];
+
+      // 유저별/전역 둘 다 최신으로 맞춰주기
+      savePlacesForUser(normalizedEmail, finalPlaces);
+      saveGlobalPlaces(finalPlaces);
 
       const newUser: UserProfile = {
         email: normalizedEmail,
@@ -137,7 +176,7 @@ export default function App() {
       };
 
       setUser(newUser);
-      setPlaces(loadedPlaces); // 🔥 유저별 저장된 맛집 불러오기
+      setPlaces(finalPlaces);
 
       toast.success("로그인 성공!");
       setCurrentPage("map");
@@ -168,7 +207,15 @@ export default function App() {
       }
 
       const normalizedEmail = email.trim().toLowerCase();
-      const loadedPlaces = loadPlacesForUser(normalizedEmail);
+      localStorage.setItem(LAST_USER_EMAIL_KEY, normalizedEmail);
+
+      const userPlaces = loadPlacesForUser(normalizedEmail);
+      const globalPlaces = loadGlobalPlaces();
+      const finalPlaces =
+        userPlaces.length > 0 ? userPlaces : globalPlaces.length > 0 ? globalPlaces : [];
+
+      savePlacesForUser(normalizedEmail, finalPlaces);
+      saveGlobalPlaces(finalPlaces);
 
       // 서버 signup은 body를 따로 안 돌려주니까, 그냥 자동 로그인 처리
       const newUser: UserProfile = {
@@ -181,7 +228,7 @@ export default function App() {
       };
 
       setUser(newUser);
-      setPlaces(loadedPlaces); // 새 유저면 빈 배열
+      setPlaces(finalPlaces);
 
       toast.success("회원가입 완료! 자동 로그인되었습니다.");
       setCurrentPage("map");
@@ -198,13 +245,16 @@ export default function App() {
     setCurrentPage("mypage");
   };
 
-  // ✅ 맛집 추가 시 localStorage에도 저장
+  // ✅ 맛집 추가 시 localStorage(전역 + 유저별)에 저장
   const handleAddPlace = (place: Place) => {
     setPlaces((prev) => {
       const updated = [...prev, place];
+
+      saveGlobalPlaces(updated);
       if (user) {
         savePlacesForUser(user.email, updated);
       }
+
       return updated;
     });
   };
@@ -212,9 +262,12 @@ export default function App() {
   const handleUpdatePlace = (updatedPlace: Place) => {
     setPlaces((prev) => {
       const updated = prev.map((p) => (p.id === updatedPlace.id ? updatedPlace : p));
+
+      saveGlobalPlaces(updated);
       if (user) {
         savePlacesForUser(user.email, updated);
       }
+
       return updated;
     });
     setSelectedPlace(null);
@@ -224,9 +277,12 @@ export default function App() {
   const handleDeletePlace = (placeId: string) => {
     setPlaces((prev) => {
       const updated = prev.filter((p) => p.id !== placeId);
+
+      saveGlobalPlaces(updated);
       if (user) {
         savePlacesForUser(user.email, updated);
       }
+
       return updated;
     });
     setSelectedPlace(null);
@@ -243,9 +299,12 @@ export default function App() {
       const updated = prev.map((p) =>
         p.id === placeId ? { ...p, isFavorite: !p.isFavorite } : p,
       );
+
+      saveGlobalPlaces(updated);
       if (user) {
         savePlacesForUser(user.email, updated);
       }
+
       return updated;
     });
   };
@@ -255,9 +314,12 @@ export default function App() {
       const updated = prev.map((p) =>
         p.id === placeId ? { ...p, isWishlist: !p.isWishlist } : p,
       );
+
+      saveGlobalPlaces(updated);
       if (user) {
         savePlacesForUser(user.email, updated);
       }
+
       return updated;
     });
   };
@@ -265,9 +327,12 @@ export default function App() {
   const handleAddWishlistPlace = (place: Place) => {
     setPlaces((prev) => {
       const updated = [...prev, { ...place, isWishlist: true }];
+
+      saveGlobalPlaces(updated);
       if (user) {
         savePlacesForUser(user.email, updated);
       }
+
       return updated;
     });
   };
